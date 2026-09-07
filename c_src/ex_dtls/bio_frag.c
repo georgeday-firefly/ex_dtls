@@ -30,12 +30,16 @@ static void init_bio_methods(void) {
   if (methods == NULL) {
     return;
   }
-  BIO_meth_set_read(methods, bread);
-  BIO_meth_set_write(methods, bwrite);
-  BIO_meth_set_ctrl(methods, ctrl);
-  BIO_meth_set_create(methods, create);
-  BIO_meth_set_destroy(methods, destroy);
-  BIO_meth_set_callback_ctrl(methods, callback_ctrl);
+  if (BIO_meth_set_read(methods, bread) != 1 ||
+      BIO_meth_set_write(methods, bwrite) != 1 ||
+      BIO_meth_set_ctrl(methods, ctrl) != 1 ||
+      BIO_meth_set_create(methods, create) != 1 ||
+      BIO_meth_set_destroy(methods, destroy) != 1 ||
+      BIO_meth_set_callback_ctrl(methods, callback_ctrl) != 1) {
+    BIO_meth_free(methods);
+    return;
+  }
+  // Keep the immutable table alive for every BIO using these callbacks.
   bio_methods = methods;
 }
 
@@ -48,11 +52,9 @@ const BIO_METHOD *BIO_f_frag(void) {
 
 static int create(BIO *bio) {
   struct Ctx *ctx = calloc(1, sizeof(struct Ctx));
-  for (int i = 0; i < MAX_FRAGS; i++) {
-    ctx->frag_sizes[i] = 0;
+  if (ctx == NULL) {
+    return 0;
   }
-  ctx->witer = 0;
-  ctx->riter = 0;
 
   BIO_set_data(bio, ctx);
   BIO_set_init(bio, 1);

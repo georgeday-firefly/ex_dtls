@@ -14,6 +14,7 @@ SSL_CTX *create_ctx(int dtls_srtp) {
         ssl_ctx, "SRTP_AES128_CM_SHA1_80:SRTP_AES128_CM_SHA1_32:SRTP_AEAD_AES_"
                  "128_GCM:SRTP_AEAD_AES_256_GCM");
     if (res != 0) {
+      SSL_CTX_free(ssl_ctx);
       return NULL;
     }
   }
@@ -22,6 +23,9 @@ SSL_CTX *create_ctx(int dtls_srtp) {
 }
 
 SSL *create_ssl(SSL_CTX *ssl_ctx, int mode) {
+  BIO *frag_bio = NULL;
+  BIO *wmem_bio = NULL;
+  BIO *rmem_bio = NULL;
   SSL *ssl = SSL_new(ssl_ctx);
   if (ssl == NULL) {
     return NULL;
@@ -32,27 +36,33 @@ SSL *create_ssl(SSL_CTX *ssl_ctx, int mode) {
   } else if (mode == MODE_SERVER) {
     SSL_set_accept_state(ssl);
   } else {
-    return NULL;
+    goto error;
   }
 
-  BIO *frag_bio = BIO_new(BIO_f_frag());
+  const BIO_METHOD *frag_method = BIO_f_frag();
+  if (frag_method == NULL) {
+    goto error;
+  }
+  frag_bio = BIO_new(frag_method);
   if (frag_bio == NULL) {
     DEBUG("Cannot create frag bio");
-    return NULL;
+    goto error;
   }
 
-  BIO *wmem_bio = BIO_new(BIO_s_mem());
+  wmem_bio = BIO_new(BIO_s_mem());
   if (wmem_bio == NULL) {
     DEBUG("Cannot create write mem bio");
-    return NULL;
+    goto error;
   }
 
-  BIO *wchain = BIO_push(frag_bio, wmem_bio);
+  BIO_push(frag_bio, wmem_bio);
+  // The fragmentation BIO now owns the write-memory BIO through its chain.
+  wmem_bio = NULL;
 
-  BIO *rmem_bio = BIO_new(BIO_s_mem());
+  rmem_bio = BIO_new(BIO_s_mem());
   if (rmem_bio == NULL) {
     DEBUG("Cannot create read mem bio");
-    return NULL;
+    goto error;
   }
 
   // #TODO Move to the BIO_s_dgram_mem once we require OpenSSL 3
@@ -68,10 +78,18 @@ SSL *create_ssl(SSL_CTX *ssl_ctx, int mode) {
   //   return NULL;
   // }
 
-  SSL_set_bio(ssl, rmem_bio, wchain);
+  // Ownership of both BIOs transfers to SSL only after setup succeeds.
+  SSL_set_bio(ssl, rmem_bio, frag_bio);
   // SSL_set_bio(ssl, rbio, wbio);
 
   return ssl;
+
+error:
+  BIO_free_all(frag_bio);
+  BIO_free(wmem_bio);
+  BIO_free(rmem_bio);
+  SSL_free(ssl);
+  return NULL;
 }
 
 KeyingMaterial *export_keying_material(SSL *ssl) {
