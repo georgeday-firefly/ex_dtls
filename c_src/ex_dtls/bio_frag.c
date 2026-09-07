@@ -22,8 +22,6 @@ struct Ctx {
   int riter;
 };
 
-// Built once: rebuilding the method per call let a concurrent caller create a
-// BIO from a half-populated method (no create callback, so no Ctx) and crash.
 static void init_bio_methods(void) {
   BIO_METHOD *methods =
       BIO_meth_new(BIO_TYPE_FILTER, "DTLS fragmentation for mem BIO");
