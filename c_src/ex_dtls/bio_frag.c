@@ -81,14 +81,6 @@ static int bread(BIO *bio, char *buf, int len) {
 
   struct Ctx *ctx = BIO_get_data(bio);
 
-  if (ctx == NULL || ctx->riter < 0 || ctx->riter > ctx->witer ||
-      ctx->witer > MAX_FRAGS) {
-    return -1;
-  }
-  if (ctx->riter == ctx->witer) {
-    return 0;
-  }
-
   if (len != ctx->frag_sizes[ctx->riter]) {
     return 0;
   }
@@ -125,9 +117,6 @@ static int bwrite(BIO *bio, const char *buf, int len) {
 
   struct Ctx *ctx = BIO_get_data(bio);
 
-  if (ctx == NULL || ctx->witer < 0) {
-    return -1;
-  }
   if (ctx->witer >= MAX_FRAGS) {
     return 0;
   }
@@ -150,13 +139,6 @@ static long ctrl(BIO *bio, int cmd, long num, void *ptr) {
   struct Ctx *ctx = BIO_get_data(bio);
 
   if (cmd == BIO_CTRL_PENDING) {
-    if (ctx == NULL || ctx->riter < 0 || ctx->riter > ctx->witer ||
-        ctx->witer > MAX_FRAGS) {
-      return -1;
-    }
-    if (ctx->riter == ctx->witer) {
-      return 0;
-    }
     return ctx->frag_sizes[ctx->riter];
   } else if (cmd == BIO_CTRL_DGRAM_QUERY_MTU) {
     return MTU;

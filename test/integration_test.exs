@@ -46,6 +46,33 @@ defmodule ExDTLS.IntegrationTest do
     assert {:ok, ^msg} = feed_packets(cl_dtls, packets)
   end
 
+  test "concurrent connections complete handshakes and exchange data" do
+    {pkey, cert} = ExDTLS.generate_key_cert()
+    opts = [dtls_srtp: true, verify_peer: true, pkey: pkey, cert: cert]
+
+    1..64
+    |> Task.async_stream(
+      fn i ->
+        client = ExDTLS.init([mode: :client] ++ opts)
+        server = ExDTLS.init([mode: :server] ++ opts)
+        {:ok, packets, _timeout} = ExDTLS.do_handshake(client)
+        assert :ok == loop({server, false}, {client, false}, packets)
+
+        for {sender, receiver} <- [{client, server}, {server, client}] do
+          message = <<i::32>>
+          assert {:ok, packets} = ExDTLS.write_data(sender, message)
+          assert {:ok, ^message} = feed_packets(receiver, packets)
+        end
+
+        assert {:ok, [packet]} = ExDTLS.close(client)
+        assert {:error, :peer_closed_for_writing} = ExDTLS.handle_data(server, packet)
+      end,
+      max_concurrency: 16,
+      timeout: 30_000
+    )
+    |> Enum.each(fn result -> assert {:ok, _connection_result} = result end)
+  end
+
   test "expired cert" do
     # generate expired cert
     {key, cert} = ExDTLS.generate_key_cert(-1, 0)

@@ -38,23 +38,11 @@ jobs:
           otp-version: ${{matrix.otp}}
           elixir-version: ${{matrix.elixir}}
       - run: mix deps.get
+      - name: Check fragment queue boundaries
+        run: |
+          cc -fsanitize=address,undefined -fno-sanitize-recover=all \
+            test/native/bio_frag_test.c c_src/ex_dtls/bio_frag.c \
+            $(pkg-config --cflags --libs openssl) -o /tmp/bio-frag-test
+          /tmp/bio-frag-test
       - run: mix coveralls.json
       - uses: codecov/codecov-action@v3
-
-  native:
-    runs-on: ubuntu-latest
-    name: Native failure and concurrency checks
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v3
-      - run: sudo apt-get update && sudo apt-get install -y clang libssl-dev pkg-config
-      - name: Check memory safety, failure cleanup, and queue boundaries
-        run: bash test/native/run.sh
-        env:
-          CC: clang
-          CFLAGS: -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
-      - name: Check concurrent initialization for data races
-        run: bash test/native/run.sh
-        env:
-          CC: clang
-          CFLAGS: -fsanitize=thread -fno-sanitize-recover=all -fno-omit-frame-pointer

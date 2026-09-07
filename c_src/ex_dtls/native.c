@@ -290,10 +290,7 @@ UNIFEX_TERM write_data(UnifexEnv *env, State *state, UnifexPayload *payload) {
   DEBUG("Wrote %d bytes of data", ret);
 
   BIO *wbio = SSL_get_wbio(state->ssl);
-  long pending_data_len = BIO_ctrl(wbio, BIO_CTRL_PENDING, 0, NULL);
-  if (pending_data_len < 0) {
-    return unifex_raise(env, "Cannot read pending data from BIO after writing");
-  }
+  size_t pending_data_len = BIO_ctrl_pending(wbio);
   if (pending_data_len == 0) {
     DEBUG("No data to read from BIO after writing");
     return unifex_raise(env, "No data to read from BIO after writing");
@@ -562,12 +559,8 @@ static int read_pending_data(UnifexPayload ***payloads, int *size,
   struct Datagram *itr = NULL;
   *size = 0;
 
-  // BIO_ctrl_pending returns size_t, which would turn a callback error (-1)
-  // into a huge allocation request. Preserve the signed result here.
-  long pending_data_len = 0;
-  BIO *wbio = SSL_get_wbio(state->ssl);
-  *payloads = NULL;
-  while ((pending_data_len = BIO_ctrl(wbio, BIO_CTRL_PENDING, 0, NULL)) > 0) {
+  size_t pending_data_len = 0;
+  while ((pending_data_len = BIO_ctrl_pending(SSL_get_wbio(state->ssl))) > 0) {
     DEBUG("WBIO: pending data: %ld bytes", pending_data_len);
     struct Datagram *dgram = calloc(1, sizeof(struct Datagram));
     UnifexPayload *payload = calloc(1, sizeof(UnifexPayload));
@@ -576,6 +569,7 @@ static int read_pending_data(UnifexPayload ***payloads, int *size,
     dgram->packet = payload;
     dgram->next = NULL;
 
+    BIO *wbio = SSL_get_wbio(state->ssl);
     int read_bytes = BIO_read(wbio, payload->data, pending_data_len);
     if (read_bytes <= 0) {
       DEBUG("WBIO: read error");
@@ -583,7 +577,28 @@ static int read_pending_data(UnifexPayload ***payloads, int *size,
       unifex_payload_release(payload);
       free(payload);
 
-      goto error;
+      struct Datagram *ptr = dgram_list;
+
+      if (ptr != NULL) {
+        if (ptr->next == NULL) {
+          unifex_payload_release(ptr->packet);
+          free(ptr->packet);
+          free(ptr);
+        } else {
+          struct Datagram *next = ptr->next;
+          while (next != NULL) {
+            unifex_payload_release(ptr->packet);
+            free(ptr->packet);
+            free(ptr);
+            ptr = next;
+            next = ptr->next;
+          }
+        }
+      }
+
+      *size = 0;
+      *payloads = NULL;
+      return -1;
     } else {
       DEBUG("WBIO: read: %d bytes", read_bytes);
       dgram->packet->size = (unsigned int)pending_data_len;
@@ -600,23 +615,8 @@ static int read_pending_data(UnifexPayload ***payloads, int *size,
     (*size)++;
   }
 
-  if (pending_data_len < 0) {
-    goto error;
-  }
   *payloads = dgram_to_payload_array(dgram_list, *size);
   return 0;
-
-error:
-  while (dgram_list != NULL) {
-    struct Datagram *next = dgram_list->next;
-    unifex_payload_release(dgram_list->packet);
-    free(dgram_list->packet);
-    free(dgram_list);
-    dgram_list = next;
-  }
-  *size = 0;
-  *payloads = NULL;
-  return -1;
 }
 
 static UnifexPayload **dgram_to_payload_array(struct Datagram *dgram_list,
