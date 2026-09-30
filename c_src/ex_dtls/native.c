@@ -170,6 +170,8 @@ UNIFEX_TERM generate_key_cert(UnifexEnv *env, int not_before, int not_after) {
 
   pkey_to_payload(env, pkey, &pkey_payload);
   cert_to_payload(env, cert, &cert_payload);
+  X509_free(cert);
+  EVP_PKEY_free(pkey);
 
   UNIFEX_TERM res_term =
       generate_key_cert_result(env, &pkey_payload, &cert_payload);
@@ -231,7 +233,9 @@ UNIFEX_TERM get_cert_fingerprint(UnifexEnv *env, UnifexPayload *cert) {
     goto exit;
   }
 
-  if (X509_digest(x509, EVP_sha256(), md, &size) != 1) {
+  int digest_ok = X509_digest(x509, EVP_sha256(), md, &size);
+  X509_free(x509);
+  if (digest_ok != 1) {
     return unifex_raise(env, "Can't get cert fingerprint");
   }
   UnifexPayload payload;
@@ -461,6 +465,9 @@ cleanup:
   free_payload_array(gen_packets, gen_packets_size);
   unifex_payload_release(&client_keying_material);
   unifex_payload_release(&server_keying_material);
+  free(keying_material->client);
+  free(keying_material->server);
+  free(keying_material);
   return res_term;
 }
 
